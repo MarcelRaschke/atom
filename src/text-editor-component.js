@@ -1656,15 +1656,6 @@ module.exports = class TextEditorComponent {
   // Called by TextEditorElement so that focus events can be handled before
   // the element is attached to the DOM.
   didFocus() {
-    // This element can be focused from a parent custom element's
-    // attachedCallback before *its* attachedCallback is fired. This protects
-    // against that case.
-    if (!this.attached) this.didAttach();
-
-    // The element can be focused before the intersection observer detects that
-    // it has been shown for the first time. If this element is being focused,
-    // it is necessarily visible, so we call `didShow` to ensure the hidden
-    // input is rendered before we try to shift focus to it.
     if (!this.visible) this.didShow();
 
     if (!this.focused) {
@@ -1673,7 +1664,7 @@ module.exports = class TextEditorComponent {
       this.scheduleUpdate();
     }
 
-    this.getHiddenInput().focus();
+    this.getHiddenInput().focus({ preventScroll: true });
   }
 
   // Called by TextEditorElement so that this function is always the first
@@ -1698,12 +1689,6 @@ module.exports = class TextEditorComponent {
   }
 
   didFocusHiddenInput() {
-    // Focusing the hidden input when it is off-screen causes the browser to
-    // scroll it into view. Since we use synthetic scrolling this behavior
-    // causes all the lines to disappear so we counteract it by always setting
-    // the scroll position to 0.
-    this.refs.scrollContainer.scrollTop = 0;
-    this.refs.scrollContainer.scrollLeft = 0;
     if (!this.focused) {
       this.focused = true;
       this.startCursorBlinking();
@@ -1736,7 +1721,10 @@ module.exports = class TextEditorComponent {
     const scrollTopChanged =
       wheelDeltaY !== 0 && this.setScrollTop(this.getScrollTop() - wheelDeltaY);
 
-    if (scrollLeftChanged || scrollTopChanged) this.updateSync();
+    if (scrollLeftChanged || scrollTopChanged) {
+      event.preventDefault();
+      this.updateSync();
+    }
   }
 
   didResize() {
@@ -1865,7 +1853,7 @@ module.exports = class TextEditorComponent {
   // keydown(code: X), keypress, keydown(code: X)
   //
   // The code X must be the same in the keydown events that bracket the
-  // keypress, meaning we're *holding* the _same_ key we intially pressed.
+  // keypress, meaning we're *holding* the _same_ key we initially pressed.
   // Got that?
   didKeydown(event) {
     // Stop dragging when user interacts with the keyboard. This prevents
@@ -1929,7 +1917,7 @@ module.exports = class TextEditorComponent {
         // Disabling the hidden input makes it lose focus as well, so we have to
         // re-enable and re-focus it.
         this.getHiddenInput().disabled = false;
-        this.getHiddenInput().focus();
+        this.getHiddenInput().focus({ preventScroll: true });
       });
       return;
     }
@@ -1972,8 +1960,12 @@ module.exports = class TextEditorComponent {
 
       // On Linux, pasting happens on middle click. A textInput event with the
       // contents of the selection clipboard will be dispatched by the browser
-      // automatically on mouseup.
-      if (platform === 'linux' && this.isInputEnabled())
+      // automatically on mouseup if editor.selectionClipboard is set to true.
+      if (
+        platform === 'linux' &&
+        this.isInputEnabled() &&
+        atom.config.get('editor.selectionClipboard')
+      )
         model.insertText(clipboard.readText('selection'));
       return;
     }
@@ -1991,7 +1983,9 @@ module.exports = class TextEditorComponent {
       return;
     }
 
-    const addOrRemoveSelection = metaKey || (ctrlKey && platform !== 'darwin');
+    const allowMultiCursor = atom.config.get('editor.multiCursorOnClick');
+    const addOrRemoveSelection =
+      allowMultiCursor && (metaKey || (ctrlKey && platform !== 'darwin'));
 
     switch (detail) {
       case 1:
@@ -2315,15 +2309,10 @@ module.exports = class TextEditorComponent {
     let desiredScrollTop, desiredScrollBottom;
     if (options && options.center) {
       const desiredScrollCenter = (screenRangeTop + screenRangeBottom) / 2;
-      if (
-        desiredScrollCenter < this.getScrollTop() ||
-        desiredScrollCenter > this.getScrollBottom()
-      ) {
-        desiredScrollTop =
-          desiredScrollCenter - this.getScrollContainerClientHeight() / 2;
-        desiredScrollBottom =
-          desiredScrollCenter + this.getScrollContainerClientHeight() / 2;
-      }
+      desiredScrollTop =
+        desiredScrollCenter - this.getScrollContainerClientHeight() / 2;
+      desiredScrollBottom =
+        desiredScrollCenter + this.getScrollContainerClientHeight() / 2;
     } else {
       desiredScrollTop = screenRangeTop - verticalScrollMargin;
       desiredScrollBottom = screenRangeBottom + verticalScrollMargin;
